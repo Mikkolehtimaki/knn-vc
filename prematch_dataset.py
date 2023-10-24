@@ -17,6 +17,7 @@ from torch import Tensor
 from hubconf import wavlm_large
 
 DOWNSAMPLE_FACTOR = 320
+FILE_EXTENSION = ".wav"
 
 global feature_cache
 feature_cache = {}
@@ -28,7 +29,7 @@ def make_librispeech_df(root_path: Path) -> pd.DataFrame:
     folders = ['train-clean-100', 'dev-clean']
     print(f"[LIBRISPEECH] Computing folders {folders}")
     for f in folders:
-        all_files.extend(list((root_path/f).rglob('**/*.flac')))
+        all_files.extend(list((root_path/f).rglob(f'**/*{FILE_EXTENSION}')))
     speakers = ['ls-' + f.stem.split('-')[0] for f in all_files]
     df = pd.DataFrame({'path': all_files, 'speaker': speakers})
     return df
@@ -42,8 +43,12 @@ def main(args):
     print(f"Matching weightings: {MATCH_WEIGHTINGS.squeeze()}\nSynthesis weightings: {SYNTH_WEIGHTINGS.squeeze()}")
     ls_df = make_librispeech_df(Path(args.librispeech_path))
 
+    print(ls_df.size)
+    # import IPython; IPython.embed(); sys.exit()
+
     print(f"Loading wavlm.")
-    wavlm = wavlm_large(pretrained=True, progress=True, device=args.device)
+    # wavlm = wavlm_large(pretrained=True, progress=True, device=args.device)
+    wavlm = None
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -54,7 +59,7 @@ def main(args):
 def path2pools(path: Path, wavlm: nn.Module(), match_weights: Tensor, synth_weights: Tensor, device):
     """Given a waveform `path`, compute the matching pool"""
 
-    uttrs_from_same_spk = sorted(list(path.parent.rglob('**/*.flac')))
+    uttrs_from_same_spk = sorted(list(path.parent.rglob(f'**/*{FILE_EXTENSION}')))
     uttrs_from_same_spk.remove(path)
     matching_pool = []
     synth_pool = []
@@ -107,16 +112,20 @@ def fast_cosine_dist(source_feats, matching_pool):
 
 @torch.inference_mode()
 def extract(df: pd.DataFrame, wavlm: nn.Module, device, ls_path: Path, out_path: Path, synth_weights: Tensor, match_weights: Tensor):
-    
+
+    df['targ_path'] = df['path'].apply(lambda x: str((out_path / Path(x).relative_to(ls_path)).with_suffix('.pt')))   
     pb = progress_bar(df.iterrows(), total=len(df))
 
     for i, row in pb:
         rel_path = Path(row.path).relative_to(ls_path)
-        targ_path = (out_path/rel_path).with_suffix('.pt')
+        # targ_path = (out_path/rel_path).with_suffix('.pt')
+        targ_path = Path(row.targ_path)
         if args.resume:
             if targ_path.is_file(): continue
         # if targ_path.is_file(): continue
         os.makedirs(targ_path.parent, exist_ok=True)
+
+        continue
 
         if Path(row.path) in feature_cache:
             source_feats = feature_cache[Path(row.path)].float()
@@ -152,6 +161,8 @@ def extract(df: pd.DataFrame, wavlm: nn.Module, device, ls_path: Path, out_path:
             synthesis_cache.clear()
             gc.collect()
             time.sleep(4)
+
+    df.to_csv(os.path.join(out_path, 'prematched.csv'), index=False)
 
 
 if __name__ == '__main__':

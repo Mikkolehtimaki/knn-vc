@@ -29,6 +29,7 @@ def hifigan_wavlm(pretrained=True, progress=True, prematched=True, device='cuda'
 
     with open(cp/'hifigan'/'config_v1_wavlm.json') as f:
         data = f.read()
+
     json_config = json.loads(data)
     h = AttrDict(json_config)
     device = torch.device(device)
